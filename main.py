@@ -9,6 +9,7 @@ import winsound
 import uuid
 import webbrowser
 import json
+from PIL import Image, ImageTk
 
 APP_NAME = "FocusBell"
 DATA_FILE = "tasks.json"
@@ -44,12 +45,14 @@ def resource_path(relative):
 
 # ========== DATA MODEL ==========
 class Alarm:
-    def __init__(self, task_name, alarm_time, active=True, id=None, priority="Medium"):
+    def __init__(self, task_name, alarm_time, active=True, id=None, priority="Medium", category="General", recurring=False):
         self.id = id if id else str(uuid.uuid4())
         self.task_name = task_name
         self.alarm_time = alarm_time
         self.active = active
         self.priority = priority
+        self.category = category
+        self.recurring = recurring
 
     def get_time_str(self):
         return self.alarm_time.strftime("%I:%M %p")
@@ -78,7 +81,9 @@ class Alarm:
             "task_name": self.task_name,
             "alarm_time": self.alarm_time.isoformat(),
             "active": self.active,
-            "priority": self.priority
+            "priority": self.priority,
+            "category": self.category,
+            "recurring": self.recurring
         }
 
     @classmethod
@@ -89,7 +94,9 @@ class Alarm:
                 alarm_time=datetime.fromisoformat(data["alarm_time"]),
                 active=data["active"],
                 id=data.get("id"),
-                priority=data.get("priority", "Medium")
+                priority=data.get("priority", "Medium"),
+                category=data.get("category", "General"),
+                recurring=data.get("recurring", False)
             )
         except Exception as e:
             print(f"Error loading task: {e}")
@@ -324,13 +331,26 @@ class FocusBellApp:
             # Priority Badge (Text)
             tk.Label(top_row, text=alarm.priority, font=(THEME["font_main"], 9, "bold"),
                      fg=strip_color, bg=bg_color).pack(side="left", padx=10, pady=(6,0))
+            # Recurring Badge
+            if alarm.recurring:
+                tk.Label(top_row, text="↻", font=(THEME["font_main"], 14),
+                     fg=THEME["secondary"], bg=bg_color).pack(side="left", padx=5, pady=(0,0))
+
         else:
              tk.Label(top_row, text="• Completed", font=(THEME["font_main"], 11),
                      fg=THEME["success"], bg=bg_color).pack(side="left", padx=10, pady=(4,0))
 
-        # Bottom Row: Task Name
-        tk.Label(content, text=alarm.task_name, font=(THEME["font_main"], 13),
-                 fg=THEME["fg"], bg=bg_color, wraplength=350, justify="left").pack(anchor="w", pady=(2,0))
+        # Bottom Row: Task Name & Category
+        bot_row = tk.Frame(content, bg=bg_color)
+        bot_row.pack(fill="x", pady=(2,0))
+
+        # Category Tag
+        cat_bg = "#333333"
+        tk.Label(bot_row, text=alarm.category, font=(THEME["font_main"], 8),
+                 fg=THEME["fg_sub"], bg=cat_bg, padx=6, pady=2).pack(side="left", padx=(0, 8))
+
+        tk.Label(bot_row, text=alarm.task_name, font=(THEME["font_main"], 13),
+                 fg=THEME["fg"], bg=bg_color, wraplength=350, justify="left").pack(side="left")
 
         # Right: Actions
         right = tk.Frame(card, bg=bg_color)
@@ -411,13 +431,30 @@ class FocusBellApp:
         ampm_cb.pack(side="left", padx=5)
 
         # --- Priority Input ---
-        tk.Label(form, text="Priority", font=(THEME["font_main"], 12),
+        tk.Label(form, text="Priority & Category", font=(THEME["font_main"], 12),
                  fg=THEME["fg_sub"], bg=THEME["bg"]).pack(anchor="w", pady=(0, 5))
         
+        opts_frame = tk.Frame(form, bg=THEME["bg"])
+        opts_frame.pack(anchor="w", pady=(0, 20))
+
+        # Priority
         prio_var = tk.StringVar(value=alarm.priority if is_edit else "Medium")
-        prio_cb = ttk.Combobox(form, textvariable=prio_var, values=["High", "Medium", "Low"], 
-                               font=(THEME["font_main"], 14), state="readonly", width=15)
-        prio_cb.pack(anchor="w", pady=(0, 20))
+        prio_cb = ttk.Combobox(opts_frame, textvariable=prio_var, values=["High", "Medium", "Low"], 
+                               font=(THEME["font_main"], 12), state="readonly", width=8)
+        prio_cb.pack(side="left", padx=(0, 10))
+
+        # Category
+        cat_var = tk.StringVar(value=alarm.category if is_edit else "General")
+        cat_cb = ttk.Combobox(opts_frame, textvariable=cat_var, values=["General", "Work", "Study", "Personal", "Health"], 
+                               font=(THEME["font_main"], 12), state="readonly", width=10)
+        cat_cb.pack(side="left", padx=10)
+
+        # Recurring Checkbox
+        recur_var = tk.BooleanVar(value=alarm.recurring if is_edit else False)
+        tk.Checkbutton(opts_frame, text="Repeat Daily", variable=recur_var,
+                       font=(THEME["font_main"], 12), bg=THEME["bg"], fg=THEME["fg"],
+                       selectcolor=THEME["input_bg"], activebackground=THEME["bg"], activeforeground=THEME["fg"]
+                       ).pack(side="left", padx=15)
 
         # --- Actions ---
         btn_frame = tk.Frame(self.main_container, bg=THEME["bg"])
@@ -427,7 +464,7 @@ class FocusBellApp:
         tk.Button(btn_frame, text="Save Task", font=(THEME["font_main"], 14, "bold"),
                   bg=THEME["accent"], fg="#000000", activebackground=THEME["accent_hover"],
                   relief="flat", width=15, cursor="hand2",
-                  command=lambda: self.save_alarm(alarm, task_var.get(), hour_var.get(), min_var.get(), ampm_var.get(), prio_var.get())
+                  command=lambda: self.save_alarm(alarm, task_var.get(), hour_var.get(), min_var.get(), ampm_var.get(), prio_var.get(), cat_var.get(), recur_var.get())
                   ).pack(side="left", padx=10)
 
         # Cancel Button
@@ -438,7 +475,7 @@ class FocusBellApp:
                   ).pack(side="left", padx=10)
 
     # ========== LOGIC ==========
-    def save_alarm(self, existing_alarm, task_name, hour, minute, ampm, priority):
+    def save_alarm(self, existing_alarm, task_name, hour, minute, ampm, priority, category, recurring):
         task_name = task_name.strip()
         if not task_name:
             messagebox.showwarning("Required", "Please enter a task description.")
@@ -465,9 +502,11 @@ class FocusBellApp:
                 existing_alarm.alarm_time = alarm_dt
                 existing_alarm.active = True # Reactivate on edit
                 existing_alarm.priority = priority
+                existing_alarm.category = category
+                existing_alarm.recurring = recurring
             else:
                 # Create New
-                new_alarm = Alarm(task_name, alarm_dt, priority=priority)
+                new_alarm = Alarm(task_name, alarm_dt, priority=priority, category=category, recurring=recurring)
                 self.alarms.append(new_alarm)
 
             self.save_tasks() # PERSIST
@@ -596,10 +635,19 @@ class FocusBellApp:
 
     # ========== FULL SCREEN TRIGGER ==========
     def trigger_alarm_ui(self, alarm):
-        # Deactivate alarm temporarily so it doesn't re-trigger while window is open
-        # We will set it to False. If Snooze, we set it True with new time.
+        # Handle logic: If recurring, don't just deactivate. 
+        # But for UI purposes, we want to stop it from triggering again immediately.
+        # If we deactivate it, we need to reactivate it when 'Complete' or 'Snooze' is clicked
+        # Or we can just shift the time now?
+        # Better: Mark inactive temporarily or just let UI block the thread? 
+        # But background thread is separate.
+        
+        # Current logic: deactivate, then reactivate if snoozed.
+        # For recurring: If "Complete" is clicked, we set active=True and add 1 day.
+        
         alarm.active = False
         self.save_tasks()
+        self.show_dashboard() # Update UI to show it's done/inactive
         
         # Open Alarm Window
         alarm_win = tk.Toplevel(self.root)
@@ -622,6 +670,10 @@ class FocusBellApp:
 
         tk.Label(alarm_win, text=alarm.task_name, font=(THEME["font_main"], 64, "bold"),
                  fg=THEME["accent"], bg=THEME["bg"], wraplength=1200, justify="center").pack(expand=True)
+        
+        if alarm.recurring:
+             tk.Label(alarm_win, text="↻ Daily Recurring Task", font=(THEME["font_main"], 18),
+                 fg=THEME["secondary"], bg=THEME["bg"]).pack(pady=(0, 10))
 
         tk.Label(alarm_win, text=f"Scheduled for {alarm.get_time_str()}", font=(THEME["font_main"], 20),
                  fg=THEME["fg_sub"], bg=THEME["bg"]).pack(pady=10)
@@ -643,7 +695,7 @@ class FocusBellApp:
         stop_btn = tk.Button(btn_frame, text="COMPLETE", font=(THEME["font_main"], 24, "bold"),
                              bg=THEME["success"], fg="#FFFFFF", activebackground="#00A040", activeforeground="#FFFFFF",
                              relief="flat", width=14, height=2, cursor="hand2",
-                             command=lambda: self.stop_alarm(alarm_win)
+                             command=lambda: self.stop_alarm(alarm_win, alarm)
                              )
         stop_btn.pack(side="left", padx=20)
 
@@ -658,53 +710,74 @@ class FocusBellApp:
         self.show_dashboard()
         messagebox.showinfo("Snoozed", f"Alarm snoozed for {mins} minutes.\nNew time: {alarm.get_time_str()}")
 
-    def stop_alarm(self, window):
+    def stop_alarm(self, window, alarm):
         winsound.PlaySound(None, winsound.SND_PURGE)
         window.destroy()
-        self.show_dashboard() # Return to dashboard and refresh
+        
+        if alarm.recurring:
+            # Reschedule for tomorrow
+            alarm.alarm_time += timedelta(days=1)
+            alarm.active = True
+            self.save_tasks()
+            self.show_dashboard()
+            messagebox.showinfo("Recurring Task", f"Task marked complete for today.\nNext alarm: {alarm.get_time_str()}")
 
-    # ========== DEV PAGE ==========
     def show_dev_page(self):
-        dev = tk.Toplevel(self.root)
-        dev.title("Developer Info")
-        dev.geometry("450x400")
-        dev.configure(bg=THEME["bg"])
-        dev.resizable(False, False)
+        # Create a modal
+        dev_win = tk.Toplevel(self.root)
+        dev_win.title("Developer Info")
+        dev_win.geometry("500x500") # Taller for image
+        dev_win.configure(bg=THEME["bg"])
+        dev_win.resizable(False, False)
+        
+        # Center it
+        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 250
+        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 250
+        dev_win.geometry(f"+{x}+{y}")
 
-        # Content Container
-        container = tk.Frame(dev, bg=THEME["bg"])
-        container.pack(expand=True, fill="both", padx=20, pady=20)
+        # Content
+        container = tk.Frame(dev_win, bg=THEME["bg"], padx=40, pady=40)
+        container.pack(fill="both", expand=True)
 
-        # Title
-        tk.Label(container, text="Developed By", font=(THEME["font_main"], 12),
-                 fg=THEME["fg_sub"], bg=THEME["bg"]).pack(pady=(10, 5))
+        # Image
+        try:
+            img_path = resource_path("mahir.jpeg")
+            if os.path.exists(img_path):
+                # Load and Resize
+                pil_img = Image.open(img_path)
+                pil_img = pil_img.resize((150, 150), Image.Resampling.LANCZOS)
+                
+                # Make it circular (optional, but looks nice) - skip complex mask for simplicity
+                # Just show square
+                
+                self.photo_img = ImageTk.PhotoImage(pil_img) # Keep reference
+                
+                img_lbl = tk.Label(container, image=self.photo_img, bg=THEME["bg"], bd=0)
+                img_lbl.pack(pady=(0, 20))
+        except Exception as e:
+            print(f"Error loading image: {e}")
 
-        # Name
         tk.Label(container, text="Mahir Siam", font=(THEME["font_main"], 24, "bold"),
-                 fg=THEME["accent"], bg=THEME["bg"]).pack(pady=5)
+                 fg=THEME["accent"], bg=THEME["bg"]).pack(pady=(0, 10))
 
-        # Tagline
-        tk.Label(container, text="MERN Stack Developer |\nC++ Problem Solver", 
-                 font=(THEME["font_main"], 12), fg=THEME["fg"], bg=THEME["bg"],
-                 justify="center").pack(pady=10)
+        tk.Label(container, text="Full Stack Developer", font=(THEME["font_main"], 14),
+                 fg=THEME["fg_sub"], bg=THEME["bg"]).pack(pady=(0, 20))
 
-        # Bio / Description
-        bio = ("Dedicated to bringing creative ideas to life\n"
-               "through robust code and interactive applications.")
-        tk.Label(container, text=bio, font=(THEME["font_main"], 10, "italic"),
-                 fg=THEME["fg_sub"], bg=THEME["bg"], justify="center").pack(pady=10)
+        tk.Label(container, text="\"Building tools to help you focus.\"", font=(THEME["font_main"], 12, "italic"),
+                 fg=THEME["fg"], bg=THEME["bg"]).pack(pady=(0, 30))
 
-        # GitHub Button
-        gh_btn = tk.Button(container, text="Visit GitHub Profile", font=(THEME["font_main"], 12, "bold"),
-                           bg=THEME["input_bg"], fg="#FFFFFF", activebackground=THEME["accent"],
-                           relief="flat", width=20, cursor="hand2",
-                           command=lambda: webbrowser.open("https://github.com/mahirsiam2004"))
-        gh_btn.pack(pady=20)
+        # Github Link
+        def open_github():
+            webbrowser.open("https://github.com/mahirsiam2004")
 
-        # Close
-        tk.Button(container, text="Close", font=(THEME["font_main"], 10),
-                  bg=THEME["bg"], fg=THEME["fg_sub"], relief="flat",
-                  cursor="hand2", command=dev.destroy).pack(side="bottom", pady=10)
+        tk.Button(container, text="Visit GitHub Profile", font=(THEME["font_main"], 12, "bold"),
+                  bg=THEME["input_bg"], fg=THEME["fg"], activebackground=THEME["card"], activeforeground=THEME["accent"],
+                  relief="flat", cursor="hand2", padx=20, pady=10,
+                  command=open_github
+                  ).pack()
+        
+        tk.Label(container, text="v1.2.0", font=(THEME["font_main"], 9),
+                 fg="#555555", bg=THEME["bg"]).pack(side="bottom", pady=10)
 
 
 # ---------- RUN ----------
