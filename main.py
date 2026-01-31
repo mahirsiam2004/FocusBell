@@ -15,7 +15,7 @@ APP_NAME = "FocusBell"
 DATA_FILE = "tasks.json"
 SETTINGS_FILE = "settings.json"
 
-# ========== THEME CONFIG ==========
+
 THEME = {
     "bg": "#121212",          # Main Background (Very Dark)
     "card": "#1E1E1E",        # Card/Item Background
@@ -102,7 +102,7 @@ class Alarm:
             print(f"Error loading task: {e}")
             return None
 
-# ========== MAIN APP ==========
+
 class FocusBellApp:
     def __init__(self, root):
         self.root = root
